@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ContactExtractor</title>
+  <style>
+    body { 
+      font-family: Arial, sans-serif; 
+      margin: 0; 
+      padding: 20px; 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+    }
+    .container { 
+      max-width: 800px; 
+      margin: 0 auto; 
+      background: white; 
+      padding: 30px; 
+      border-radius: 15px; 
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    }
+    h1 { 
+      color: #333; 
+      text-align: center; 
+      margin-bottom: 30px;
+      font-size: 2.5em;
+    }
+    .form-group { 
+      margin-bottom: 20px; 
+    }
+    label { 
+      display: block; 
+      margin-bottom: 8px; 
+      font-weight: bold;
+      color: #555;
+    }
+    textarea { 
+      width: 100%; 
+      height: 120px; 
+      padding: 15px; 
+      border: 2px solid #ddd; 
+      border-radius: 8px; 
+      font-size: 16px;
+      resize: vertical;
+    }
+    textarea:focus {
+      border-color: #667eea;
+      outline: none;
+    }
+    button { 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+      color: white; 
+      padding: 15px 30px; 
+      border: none; 
+      border-radius: 8px; 
+      cursor: pointer; 
+      font-size: 16px;
+      font-weight: bold;
+      transition: transform 0.2s;
+    }
+    button:hover { 
+      transform: translateY(-2px);
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .results { 
+      margin-top: 20px; 
+      padding: 20px; 
+      background: #f8f9fa; 
+      border-radius: 8px; 
+      border-left: 4px solid #667eea;
+    }
+    .status { 
+      padding: 15px; 
+      margin: 10px 0; 
+      border-radius: 8px; 
+      font-weight: bold;
+    }
+    .status.running { 
+      background: #fff3cd; 
+      border: 1px solid #ffeaa7; 
+      color: #856404;
+    }
+    .status.completed { 
+      background: #d4edda; 
+      border: 1px solid #c3e6cb; 
+      color: #155724;
+    }
+    .status.failed { 
+      background: #f8d7da; 
+      border: 1px solid #f5c6cb; 
+      color: #721c24;
+    }
+    .email-item {
+      background: white;
+      padding: 10px;
+      margin: 5px 0;
+      border-radius: 5px;
+      border-left: 3px solid #667eea;
+    }
+    .url {
+      color: #666;
+      font-size: 0.9em;
+    }
+    .email {
+      color: #333;
+      font-weight: bold;
+    }
+    .stats {
+      background: #e9ecef;
+      padding: 15px;
+      border-radius: 8px;
+      margin: 15px 0;
+      text-align: center;
+    }
+    .loading {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #667eea;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎯 ContactExtractor</h1>
+    <p style="text-align: center; color: #666; margin-bottom: 30px;">
+      Извлечение email адресов с веб-сайтов
+    </p>
+    
+    <div class="form-group">
+      <label for="urls">Введите URL сайтов (по одному на строку):</label>
+      <textarea id="urls" placeholder="https://example.com&#10;https://another-site.com"></textarea>
+    </div>
+    
+    <button onclick="startExtraction()" id="extractBtn">🚀 Начать извлечение</button>
+    
+    <div id="status"></div>
+    <div id="results" class="results" style="display:none"></div>
+  </div>
+
+  <script>
+    let currentJobId = null;
+
+    async function startExtraction() {
+      const urls = document.getElementById('urls').value.split('\n').filter(url => url.trim());
+      if (urls.length === 0) {
+        alert('Пожалуйста, введите хотя бы один URL');
+        return;
+      }
+
+      if (urls.length > 10) {
+        alert('Максимум 10 сайтов за раз');
+        return;
+      }
+
+      const btn = document.getElementById('extractBtn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Обработка...';
+
+      try {
+        const response = await fetch('/api/extract', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ urls })
+        });
+
+        const result = await response.json();
+        if (result.success) {
+          currentJobId = result.jobId;
+          checkStatus();
+        } else {
+          throw new Error(result.error || 'Ошибка при запуске извлечения');
+        }
+      } catch (error) {
+        alert('Ошибка: ' + error.message);
+        btn.disabled = false;
+        btn.textContent = '🚀 Начать извлечение';
+      }
+    }
+
+    async function checkStatus() {
+      if (!currentJobId) return;
+
+      try {
+        const response = await fetch(`/api/job/${currentJobId}`);
+        const job = await response.json();
+
+        const statusDiv = document.getElementById('status');
+        const btn = document.getElementById('extractBtn');
+
+        if (job.status === 'running') {
+          statusDiv.innerHTML = `
+            <div class="status running">
+              <div class="loading"></div> Обработка сайтов... Пожалуйста, подождите
+            </div>
+          `;
+          setTimeout(checkStatus, 2000);
+        } else if (job.status === 'completed') {
+          statusDiv.innerHTML = `
+            <div class="status completed">
+              ✅ Извлечение завершено успешно!
+            </div>
+          `;
+          showResults(job.results);
+          btn.disabled = false;
+          btn.textContent = '🚀 Начать извлечение';
+        } else if (job.status === 'failed') {
+          statusDiv.innerHTML = `
+            <div class="status failed">
+              ❌ Ошибка: ${job.error || 'Неизвестная ошибка'}
+            </div>
+          `;
+          btn.disabled = false;
+          btn.textContent = '🚀 Начать извлечение';
+        }
+      } catch (error) {
+        console.error('Ошибка при проверке статуса:', error);
+        setTimeout(checkStatus, 2000);
+      }
+    }
+
+    function showResults(results) {
+      const resultsDiv = document.getElementById('results');
+      resultsDiv.style.display = 'block';
+      
+      const uniqueEmails = [...new Set(results.map(r => r.email))];
+      
+      resultsDiv.innerHTML = `
+        <div class="stats">
+          <h3>📊 Результаты извлечения</h3>
+          <p><strong>Найдено контактов:</strong> ${uniqueEmails.length}</p>
+          <p><strong>Обработано сайтов:</strong> ${new Set(results.map(r => r.url)).size}</p>
+        </div>
+        
+        <h4>📧 Найденные email адреса:</h4>
+        <div style="max-height: 400px; overflow-y: auto; margin: 15px 0;">
+          ${results.map(r => `
+            <div class="email-item">
+              <div class="url">🌐 ${r.url}</div>
+              <div class="email">📧 ${r.email}</div>
+            </div>
+          `).join('')}
+        </div>
+        
+        <div style="text-align: center; margin-top: 20px;">
+          <button onclick="downloadResults()" style="background: #28a745; padding: 12px 25px;">
+            📥 Скачать CSV файл
+          </button>
+        </div>
+      `;
+    }
+
+    function downloadResults() {
+      if (currentJobId) {
+        window.open(`/api/job/${currentJobId}/download`);
+      }
+    }
+  </script>
+</body>
+</html>
