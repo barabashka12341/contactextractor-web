@@ -16,32 +16,69 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Store for active jobs
 const activeJobs = new Map();
 
-// Email extraction function
+// Email extraction function with better error handling
 async function extractEmailsFromUrl(url) {
   try {
     console.log(`🔍 Извлекаем контакты с: ${url}`);
     
+    // Add protocol if missing
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+    
     const response = await axios.get(url, {
-      timeout: 15000,
+      timeout: 10000, // Increased timeout
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
+      },
+      maxRedirects: 5,
+      validateStatus: function (status) {
+        return status >= 200 && status < 300; // Accept only 2xx status codes
       }
     });
 
     const $ = cheerio.load(response.data);
     const emails = [];
 
-    // Extract emails from various elements
+    // Extract emails from various elements with better regex
+    const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+    
+    // Search in all text content
     $('*').each((i, element) => {
       const text = $(element).text();
-      const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
       const matches = text.match(emailRegex);
       if (matches) {
         emails.push(...matches);
       }
     });
 
-    return [...new Set(emails)]; // Remove duplicates
+    // Also search in href attributes
+    $('a[href^="mailto:"]').each((i, element) => {
+      const href = $(element).attr('href');
+      if (href) {
+        const email = href.replace('mailto:', '');
+        if (email.match(emailRegex)) {
+          emails.push(email);
+        }
+      }
+    });
+
+    // Remove duplicates and filter out common false positives
+    const uniqueEmails = [...new Set(emails)].filter(email => {
+      return !email.includes('example.com') && 
+             !email.includes('test.com') && 
+             !email.includes('domain.com') &&
+             email.length > 5;
+    });
+
+    console.log(`✅ Найдено ${uniqueEmails.length} email адресов на ${url}`);
+    return uniqueEmails;
+    
   } catch (error) {
     console.error(`❌ Ошибка при извлечении с ${url}:`, error.message);
     return [];
@@ -72,9 +109,19 @@ app.post('/api/extract', async (req, res) => {
     // Process URLs in background
     (async () => {
       const allEmails = [];
+      let processedCount = 0;
+      
       for (const url of urls) {
-        const emails = await extractEmailsFromUrl(url);
-        allEmails.push(...emails.map(email => ({ url, email })));
+        try {
+          console.log(`🔄 Обрабатываем: ${url}`);
+          const emails = await extractEmailsFromUrl(url);
+          allEmails.push(...emails.map(email => ({ url, email })));
+          processedCount++;
+          console.log(`✅ Обработано ${processedCount}/${urls.length} сайтов`);
+        } catch (error) {
+          console.error(`❌ Ошибка при обработке ${url}:`, error.message);
+          processedCount++;
+        }
       }
 
       const job = activeJobs.get(jobId);
@@ -82,11 +129,13 @@ app.post('/api/extract', async (req, res) => {
         job.status = 'completed';
         job.endTime = new Date();
         job.results = allEmails;
+        console.log(`🎉 Завершено! Найдено ${allEmails.length} контактов с ${processedCount} сайтов`);
       }
     })();
 
     res.json({ success: true, jobId });
   } catch (error) {
+    console.error('Ошибка при запуске извлечения:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -111,7 +160,7 @@ app.get('/api/job/:jobId/download', (req, res) => {
   res.send(csv);
 });
 
-// Health check for cloud platforms
+// Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
